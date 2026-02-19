@@ -1,0 +1,39 @@
+LangGraph Overview
+==================
+
+LangGraph is a library built on top of LangChain for building stateful, multi-actor applications
+with language models. It extends the LangChain Expression Language (LCEL) with the ability to
+coordinate multiple chains (or actors) across multiple steps of computation in a cyclic fashion.
+
+Key Concepts
+------------
+- **StateGraph**: The core data structure. It represents the agent as a graph where nodes are
+  Python functions and edges define the flow of execution.
+- **Nodes**: Each node is a Python function that receives the current state and returns an
+  updated state.
+- **Edges**: Connect nodes. Edges can be unconditional (always go from A to B) or conditional
+  (choose the next node based on the current state).
+- **State**: A TypedDict (or dataclass) shared across all nodes. Nodes read from it and write
+  updated values back.
+
+Agentic RAG Pattern
+-------------------
+Agentic RAG (Retrieval-Augmented Generation) enhances standard RAG by adding agent-like
+reasoning steps:
+1. Retrieve – fetch documents from a vector store based on the query.
+2. Grade – evaluate whether the retrieved documents are relevant.
+3. Generate – synthesize an answer from the relevant documents.
+4. Fallback – if no relevant documents are found, answer from model knowledge.
+
+This pattern improves answer quality by filtering out irrelevant context before generation.
+
+Ollama
+------
+Ollama allows running large language models locally. Common models include:
+- qwen3:4b  – a compact, fast model from Alibaba Cloud
+- deepseek-r1:8b – a reasoning-focused model
+
+ChromaDB
+--------
+ChromaDB is an open-source vector database used to store and retrieve document embeddings.
+It persists data to disk, so the index only needs to be built once.
