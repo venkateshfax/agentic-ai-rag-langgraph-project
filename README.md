@@ -64,7 +64,7 @@ ollama pull nomic-embed-text  # embeddings (required)
 
 ```bash
 # 1. Clone the repo
-git clone https://github.com/YOUR_USERNAME/agentic-ai-rag-langgraph-project.git
+git clone https://github.com/venkateshfax/agentic-ai-rag-langgraph-project.git
 cd agentic-ai-rag-langgraph-project
 
 # 2. Create and activate a virtual environment
