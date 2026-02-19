@@ -1,0 +1,33 @@
+# Vector database (auto-generated, do not commit)
+chroma_db/
+
+# Python virtual environment
+venv/
+.venv/
+env/
+
+# Python bytecode
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Environment variables
+.env
+
+# macOS
+.DS_Store
+
+# Distribution / packaging
+*.egg-info/
+dist/
+build/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# LangSmith / Tracing (future)
+.langsmith/
