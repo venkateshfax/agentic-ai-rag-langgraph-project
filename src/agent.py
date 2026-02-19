@@ -29,6 +29,7 @@ class AgentState(TypedDict):
     documents: List[Document]
     generation: str
     messages: Annotated[List[BaseMessage], operator.add]
+    history: List[BaseMessage]  # prior turns injected at run_query(); read-only inside graph
     grade: str          # "relevant" | "not_relevant"
     iterations: int
 
@@ -87,8 +88,19 @@ GENERATE_PROMPT = ChatPromptTemplate.from_messages([
      "You are a helpful assistant. Answer the user's question using ONLY the provided context. "
      "If the context is insufficient, say so honestly. Be concise and accurate."),
     ("human",
-     "Context:\n{context}\n\nQuestion: {question}"),
+     "Conversation history:\n{history}\n\nContext:\n{context}\n\nQuestion: {question}"),
 ])
+
+
+def _format_history(history: List[BaseMessage]) -> str:
+    """Format message history as a readable string for LLM prompts."""
+    if not history:
+        return "(none)"
+    lines = []
+    for m in history:
+        role = "Human" if isinstance(m, HumanMessage) else "Assistant"
+        lines.append(f"{role}: {m.content}")
+    return "\n".join(lines)
 
 
 def generate(state: AgentState, model_config: ModelConfig) -> AgentState:
@@ -100,12 +112,13 @@ def generate(state: AgentState, model_config: ModelConfig) -> AgentState:
     question = state["question"]
     documents = state["documents"]
     context = "\n\n".join(doc.page_content for doc in documents)
+    history_text = _format_history(state.get("history", []))
 
-    result = chain.invoke({"context": context, "question": question})
+    result = chain.invoke({"context": context, "question": question, "history": history_text})
     generation = result.content.strip()
     print(f"  Generated answer ({len(generation)} chars)")
 
-    messages = state.get("messages", []) + [
+    messages = [
         HumanMessage(content=question),
         AIMessage(content=generation),
     ]
@@ -118,7 +131,7 @@ FALLBACK_PROMPT = ChatPromptTemplate.from_messages([
     ("system",
      "You are a helpful assistant. Answer the question using your own knowledge. "
      "Be concise. Note at the end that no relevant documents were found in the knowledge base."),
-    ("human", "Question: {question}"),
+    ("human", "Conversation history:\n{history}\n\nQuestion: {question}"),
 ])
 
 
@@ -128,11 +141,12 @@ def web_search_fallback(state: AgentState, model_config: ModelConfig) -> AgentSt
     llm = get_llm(model_config.model_name, temperature=0.2)
     chain = FALLBACK_PROMPT | llm
 
-    result = chain.invoke({"question": state["question"]})
+    history_text = _format_history(state.get("history", []))
+    result = chain.invoke({"question": state["question"], "history": history_text})
     generation = result.content.strip()
     print("  Generated fallback answer")
 
-    messages = state.get("messages", []) + [
+    messages = [
         HumanMessage(content=state["question"]),
         AIMessage(content=generation),
     ]
@@ -183,15 +197,21 @@ def build_rag_graph(vector_store: Chroma, model_config: ModelConfig) -> StateGra
     return workflow.compile()
 
 
-def run_query(graph, question: str, model_config: ModelConfig = None) -> str:
-    """Run a single query through the RAG graph."""
+def run_query(
+    graph,
+    question: str,
+    history: List[BaseMessage] = None,
+    model_config: ModelConfig = None,
+) -> tuple:
+    """Run a single query through the RAG graph. Returns (answer, new_messages)."""
     initial_state: AgentState = {
         "question": question,
         "documents": [],
         "generation": "",
         "messages": [],
+        "history": history or [],
         "grade": "",
         "iterations": 0,
     }
     final_state = graph.invoke(initial_state)
-    return final_state["generation"]
+    return final_state["generation"], final_state["messages"]

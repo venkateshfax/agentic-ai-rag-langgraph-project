@@ -110,6 +110,9 @@ def main():
 
     console.print(f"[bold green]Ready![/bold green] Model: [bold yellow]{model_config.model_name}[/bold yellow]. Ask me anything.\n")
 
+    conversation_history = []   # persists across turns within a session
+    HISTORY_WINDOW = 6          # last 3 turns (3 Human + 3 AI messages)
+
     while True:
         try:
             question = Prompt.ask("[bold blue]You[/bold blue]").strip()
@@ -130,6 +133,7 @@ def main():
             with console.status("[bold green]Re-indexing documents..."):
                 vector_store = build_vector_store()
                 graph_ref[0] = build_rag_graph(vector_store, model_config)
+            conversation_history.clear()
             console.print("[bold green]Knowledge base rebuilt![/bold green]\n")
             continue
 
@@ -141,6 +145,8 @@ def main():
             new_model = question[7:].strip()
             if new_model:
                 switch_model(new_model, model_config, vector_store, graph_ref)
+                conversation_history.clear()
+                console.print("[dim]Conversation history cleared.[/dim]")
             else:
                 console.print("[yellow]Usage: /model <model-name>  (e.g. /model deepseek-r1:8b)[/yellow]")
             continue
@@ -150,7 +156,13 @@ def main():
             continue
 
         with console.status("[bold green]Thinking..."):
-            answer = run_query(graph_ref[0], question, model_config)
+            answer, new_messages = run_query(
+                graph_ref[0],
+                question,
+                history=conversation_history[-HISTORY_WINDOW:],
+                model_config=model_config,
+            )
+        conversation_history.extend(new_messages)
 
         console.print()
         console.print(Panel(
