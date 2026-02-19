@@ -19,6 +19,7 @@ from rich.table import Table
 
 from src.vector_store import build_vector_store
 from src.agent import build_rag_graph, run_query, ModelConfig
+from src.summarizer import summarize_documents
 
 console = Console()
 
@@ -152,7 +153,19 @@ def main():
             continue
 
         if question.lower() == "/summarize":
-            console.print("[yellow]/summarize coming soon — stay tuned![/yellow]")
+            with console.status("[bold green]Summarizing documents..."):
+                results = summarize_documents(vector_store, model_config.model_name)
+            if not results:
+                console.print("[yellow]No documents found in the knowledge base. Drop files into docs/ and run rebuild.[/yellow]")
+            else:
+                for display_name, summary in results:
+                    console.print()
+                    console.print(Panel(
+                        Markdown(summary),
+                        title=f"[bold magenta]{display_name}[/bold magenta]",
+                        border_style="magenta",
+                    ))
+            console.print()
             continue
 
         with console.status("[bold green]Thinking..."):
