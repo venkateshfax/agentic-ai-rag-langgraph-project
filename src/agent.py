@@ -26,6 +26,7 @@ class ModelConfig:
 class AgentState(TypedDict):
     """State shared across all nodes in the graph."""
     question: str
+    rewritten_query: str        # set by rewrite_query node; used for retrieval and grading
     documents: List[Document]
     generation: str
     messages: Annotated[List[BaseMessage], operator.add]
@@ -40,14 +41,46 @@ def get_llm(model_name: str, temperature: float = 0.0, num_predict: int = 512) -
     return ChatOllama(model=model_name, temperature=temperature, num_predict=num_predict)
 
 
+# ── Node: rewrite_query ────────────────────────────────────────────────────────
+
+REWRITE_PROMPT = ChatPromptTemplate.from_messages([
+    ("system",
+     "You are a query rewriting assistant. Rephrase the user's question into a clear, "
+     "specific, self-contained search query that will retrieve the most relevant documents. "
+     "If there is conversation history, resolve any pronouns or vague references. "
+     "Return ONLY the rewritten query — no explanation, no preamble, no quotes."),
+    ("human",
+     "Conversation history:\n{history}\n\nOriginal question: {question}\n\nRewritten query:"),
+])
+
+
+def rewrite_query(state: AgentState, model_config: ModelConfig) -> AgentState:
+    """Rephrase the user's question for clearer, more precise retrieval."""
+    print("\n[Node: rewrite_query]")
+    llm = get_llm(model_config.model_name, temperature=0.0, num_predict=128)
+    chain = REWRITE_PROMPT | llm
+
+    history_text = _format_history(state.get("history", []))
+    result = chain.invoke({"history": history_text, "question": state["question"]})
+    rewritten = result.content.strip()
+
+    # Guard: fall back to original if LLM returns empty
+    if not rewritten:
+        rewritten = state["question"]
+
+    print(f"  Original:  {state['question']}")
+    print(f"  Rewritten: {rewritten}")
+    return {**state, "rewritten_query": rewritten}
+
+
 # ── Node: retrieve ─────────────────────────────────────────────────────────────
 
 def retrieve(state: AgentState, vector_store: Chroma) -> AgentState:
     """Retrieve relevant documents from the vector store."""
     print("\n[Node: retrieve]")
-    question = state["question"]
+    query = state.get("rewritten_query") or state["question"]
     retriever = vector_store.as_retriever(search_kwargs={"k": 4})
-    documents = retriever.invoke(question)
+    documents = retriever.invoke(query)
     print(f"  Retrieved {len(documents)} document(s)")
     return {**state, "documents": documents, "iterations": state.get("iterations", 0) + 1}
 
@@ -71,10 +104,10 @@ def _keyword_overlap(question: str, text: str, threshold: float = 0.15) -> bool:
 def grade_documents(state: AgentState) -> AgentState:
     """Grade retrieved documents using fast keyword-overlap (no LLM call)."""
     print("\n[Node: grade_documents]")
-    question = state["question"]
+    query = state.get("rewritten_query") or state["question"]
     documents = state["documents"]
 
-    relevant_docs = [doc for doc in documents if _keyword_overlap(question, doc.page_content)]
+    relevant_docs = [doc for doc in documents if _keyword_overlap(query, doc.page_content)]
 
     grade = "relevant" if relevant_docs else "not_relevant"
     print(f"  Grade: {grade} ({len(relevant_docs)}/{len(documents)} docs kept)")
@@ -167,6 +200,9 @@ def decide_after_grade(state: AgentState) -> str:
 def build_rag_graph(vector_store: Chroma, model_config: ModelConfig) -> StateGraph:
     """Build and compile the LangGraph RAG agent."""
 
+    def _rewrite_query(state):
+        return rewrite_query(state, model_config)
+
     def _retrieve(state):
         return retrieve(state, vector_store)
 
@@ -178,13 +214,15 @@ def build_rag_graph(vector_store: Chroma, model_config: ModelConfig) -> StateGra
 
     workflow = StateGraph(AgentState)
 
+    workflow.add_node("rewrite_query", _rewrite_query)
     workflow.add_node("retrieve", _retrieve)
     workflow.add_node("grade_documents", grade_documents)
     workflow.add_node("generate", _generate)
     workflow.add_node("fallback", _fallback)
 
-    workflow.set_entry_point("retrieve")
+    workflow.set_entry_point("rewrite_query")
 
+    workflow.add_edge("rewrite_query", "retrieve")
     workflow.add_edge("retrieve", "grade_documents")
     workflow.add_conditional_edges(
         "grade_documents",
@@ -206,6 +244,7 @@ def run_query(
     """Run a single query through the RAG graph. Returns (answer, new_messages)."""
     initial_state: AgentState = {
         "question": question,
+        "rewritten_query": "",
         "documents": [],
         "generation": "",
         "messages": [],
